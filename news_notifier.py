@@ -31,7 +31,7 @@ SOURCE_FEEDS = {
     "Politico": "https://rss.politico.com/politics-news.xml",
     "Economist": "https://www.bing.com/news/search?q=site%3Aeconomist.com&format=rss",
     "WSJ": "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
-    "AP NEWS": "https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en",
+    "AP NEWS": "https://www.bing.com/news/search?q=site%3Aapnews.com&format=rss",
     "The Atlantic": "https://www.theatlantic.com/feed/channel/news/",
     "Reuters": "https://www.bing.com/news/search?q=site%3Areuters.com&format=rss",
     "SCMP": "https://www.scmp.com/rss/91/feed",
