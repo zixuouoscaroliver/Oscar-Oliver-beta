@@ -11,6 +11,7 @@ permissions:
 jobs:
   run-news-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: telegram-news-bot
       cancel-in-progress: false
@@ -49,6 +50,20 @@ jobs:
           FETCH_ARTICLE_IMAGE: "true"
         run: |
           python news_notifier.py --once
+
+      - name: Alert Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Best-effort alert, so it doesn't mask the original failure.
+          set +e
+          msg="news-bot FAILED\nrepo=${GITHUB_REPOSITORY}\nrun=${GITHUB_RUN_URL}"
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${msg}" >/dev/null || true
 
       - name: Commit state
         env:
