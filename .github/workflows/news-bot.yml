@@ -28,14 +28,7 @@ jobs:
       - name: Ensure state file exists
         run: |
           if [ ! -f .state.cloud.json ]; then
-            cat > .state.cloud.json <<'JSON'
-            {
-              "initialized": false,
-              "seen": {},
-              "night_buffer": [],
-              "last_digest_date": ""
-            }
-            JSON
+            python -c 'import json; p=\".state.cloud.json\"; s={\"initialized\": False, \"seen\": {}, \"night_buffer\": [], \"last_digest_date\": \"\"}; open(p,\"w\",encoding=\"utf-8\").write(json.dumps(s, ensure_ascii=False, indent=2)+\"\\n\")'
           fi
 
       - name: Run bot once
