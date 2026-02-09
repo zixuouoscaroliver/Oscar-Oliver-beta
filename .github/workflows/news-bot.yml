@@ -1,0 +1,68 @@
+name: Telegram News Bot
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-news-bot:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: telegram-news-bot
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ensure state file exists
+        run: |
+          if [ ! -f .state.cloud.json ]; then
+            cat > .state.cloud.json <<'JSON'
+{
+  "initialized": false,
+  "seen": {},
+  "night_buffer": [],
+  "last_digest_date": ""
+}
+JSON
+          fi
+
+      - name: Run bot once
+        env:
+          TZ: ${{ vars.NEWS_TZ || 'Asia/Shanghai' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          POLL_SECONDS: "120"
+          MAX_ITEMS_PER_SOURCE: "3"
+          BOOTSTRAP_SILENT: "true"
+          STATE_FILE: ".state.cloud.json"
+          SEEN_TTL_HOURS: "72"
+          MAJOR_ONLY: "true"
+          MAJOR_KEYWORDS: "breaking,urgent,election,war,ceasefire,attack,missile,killed,dead,explosion,earthquake,flood,hurricane,wildfire,sanction,supreme court,white house,fed,interest rate,inflation,recession,bankruptcy,merger,acquisition,ipo,earnings,tariff,taiwan,south china sea"
+          QUIET_HOUR_START: "23"
+          QUIET_HOUR_END: "9"
+          NIGHT_DIGEST_MAX: "40"
+          FETCH_ARTICLE_IMAGE: "true"
+        run: |
+          python news_notifier.py --once
+
+      - name: Commit state
+        run: |
+          if ! git diff --quiet -- .state.cloud.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .state.cloud.json
+            git commit -m "chore: update bot state"
+            git push
+          fi
