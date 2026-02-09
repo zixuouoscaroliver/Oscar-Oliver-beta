@@ -29,13 +29,13 @@ jobs:
         run: |
           if [ ! -f .state.cloud.json ]; then
             cat > .state.cloud.json <<'JSON'
-{
-  "initialized": false,
-  "seen": {},
-  "night_buffer": [],
-  "last_digest_date": ""
-}
-JSON
+            {
+              "initialized": false,
+              "seen": {},
+              "night_buffer": [],
+              "last_digest_date": ""
+            }
+            JSON
           fi
 
       - name: Run bot once
