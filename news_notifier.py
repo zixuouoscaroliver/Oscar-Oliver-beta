@@ -520,6 +520,7 @@ def run(run_once: bool = False) -> None:
     while True:
         try:
             now_local = datetime.now()
+            cycle_ts = now_ts()
             today_str = now_local.strftime("%Y-%m-%d")
             quiet_now = is_quiet_time(now_local, quiet_start, quiet_end)
 
@@ -528,30 +529,58 @@ def run(run_once: bool = False) -> None:
                     token, chat_id, state, today_str, fetch_article_image_enabled=fetch_article_image_enabled
                 )
 
+            sources_ok = 0
+            sources_fail = 0
+            entries_total = 0
+            skipped_seen = 0
+            skipped_major = 0
             all_new = []
             for source, url in source_feeds.items():
                 try:
                     entries = fetch_entries(url)
                 except Exception:
+                    sources_fail += 1
                     logging.exception("抓取失败: %s", source)
                     continue
+                sources_ok += 1
+                entries_total += len(entries)
 
                 new_count = 0
                 for entry in entries:
                     uid = entry_uid(entry)
                     if not uid or uid in state["seen"]:
+                        if uid and uid in state["seen"]:
+                            skipped_seen += 1
                         continue
 
                     if major_only and (not is_major_news(entry, keyword_patterns)):
+                        skipped_major += 1
                         continue
 
-                    state["seen"][uid] = now_ts()
+                    state["seen"][uid] = cycle_ts
                     all_new.append((source, entry))
                     new_count += 1
                     if new_count >= max_items_per_source:
                         break
 
             state["seen"] = prune_seen(state["seen"], seen_ttl_hours)
+
+            if sources_ok == 0:
+                logging.warning("本轮所有来源抓取均失败（sources_fail=%s），可能是网络/被封/源站变更导致", sources_fail)
+            if entries_total > 0 and len(all_new) == 0:
+                if major_only and skipped_major > 0:
+                    logging.info(
+                        "本轮有内容但未命中关键词：entries_total=%s skipped_major=%s skipped_seen=%s",
+                        entries_total,
+                        skipped_major,
+                        skipped_seen,
+                    )
+                else:
+                    logging.info(
+                        "本轮有内容但没有新条目：entries_total=%s skipped_seen=%s",
+                        entries_total,
+                        skipped_seen,
+                    )
 
             if not state.get("initialized", False):
                 state["initialized"] = True
@@ -583,6 +612,17 @@ def run(run_once: bool = False) -> None:
                         logging.exception("推送失败: %s", source)
 
             save_state(state_file, state)
+            logging.info(
+                "summary quiet=%s sources_ok=%s sources_fail=%s entries_total=%s new=%s skipped_seen=%s skipped_major=%s buffered=%s",
+                quiet_now,
+                sources_ok,
+                sources_fail,
+                entries_total,
+                len(all_new),
+                skipped_seen,
+                skipped_major,
+                len(state.get("night_buffer", [])),
+            )
             logging.info("本轮完成，新消息=%s", len(all_new))
         except Exception:
             logging.exception("主循环异常")
