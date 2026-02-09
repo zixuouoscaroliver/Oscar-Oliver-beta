@@ -35,12 +35,12 @@ jobs:
           set -e
           # If main is protected / pushes are blocked, we keep the state in a dedicated branch.
           # This branch contains only `.state.cloud.json`.
-          git fetch origin "${STATE_BRANCH}:${STATE_BRANCH}" || true
-          if git show "${STATE_BRANCH}:.state.cloud.json" >/dev/null 2>&1; then
-            git show "${STATE_BRANCH}:.state.cloud.json" > .state.cloud.json
-            echo "restored .state.cloud.json from ${STATE_BRANCH}"
+          git fetch origin "${STATE_BRANCH}" || true
+          if git show "origin/${STATE_BRANCH}:.state.cloud.json" >/dev/null 2>&1; then
+            git show "origin/${STATE_BRANCH}:.state.cloud.json" > .state.cloud.json
+            echo "restored .state.cloud.json from origin/${STATE_BRANCH}"
           else
-            echo "no prior state found in ${STATE_BRANCH} (will initialize)"
+            echo "no prior state found in origin/${STATE_BRANCH} (will initialize)"
           fi
 
       - name: Ensure state file exists
@@ -86,13 +86,31 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           STATE_BRANCH: bot-state
         run: |
-          if ! git diff --quiet -- .state.cloud.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .state.cloud.json
-            git commit -m "chore: update bot state"
-            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
-            # Push state to a dedicated branch so `main` can stay clean and/or protected.
-            git checkout -B "${STATE_BRANCH}"
-            git push origin "HEAD:${STATE_BRANCH}"
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+
+          # Stash the updated state file before switching branches.
+          cp .state.cloud.json /tmp/state.cloud.json
+
+          # Rebase state updates on top of the existing state branch to avoid non-fast-forward pushes.
+          git fetch origin "${STATE_BRANCH}" || true
+          if git show "origin/${STATE_BRANCH}" >/dev/null 2>&1; then
+            git checkout -B "${STATE_BRANCH}" "origin/${STATE_BRANCH}"
+          else
+            git checkout --orphan "${STATE_BRANCH}"
+            git rm -rf . >/dev/null 2>&1 || true
           fi
+
+          mv /tmp/state.cloud.json .state.cloud.json
+          git add .state.cloud.json
+
+          if git diff --cached --quiet; then
+            echo "no state changes"
+            exit 0
+          fi
+
+          git commit -m "chore: update bot state"
+          git push origin "${STATE_BRANCH}:${STATE_BRANCH}"
