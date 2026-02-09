@@ -8,3 +8,5 @@ notifier.pid
 launchd.out.log
 launchd.err.log
 _backups/
+
+.DS_Store

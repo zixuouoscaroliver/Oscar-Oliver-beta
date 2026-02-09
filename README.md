@@ -132,3 +132,51 @@ launchctl bootout gui/$(id -u)/com.oliverou.telegram-news-pusher
 - `.state.cloud.json`
 
 进入 `Actions -> Telegram News Bot`，手动点一次 `Run workflow` 完成首轮初始化，后续会按 cron 自动运行。
+
+## 7. 维护与排障（建议先读）
+
+Actions 页面：
+- `https://github.com/zixuouoscaroliver/Oscar-Oliver/actions`
+
+云端运行说明：
+- 工作流：`.github/workflows/news-bot.yml`
+- 运行方式：`python news_notifier.py --once`（Actions 每 5 分钟跑一次）
+- 状态文件：`.state.cloud.json`（由 Actions 自动提交更新，用于去重和夜间汇总）
+
+### 7.1 不推送/推送少（最常见原因）
+- 没有命中重大关键词：`MAJOR_ONLY=true` 时只发命中 `MAJOR_KEYWORDS` 的标题
+- 在免打扰时段：23:00-09:00（按 `NEWS_TZ` 时区），新闻会进入夜间汇总缓存，09:00 后发送
+- Actions 失败：打开 Actions 页面看最新 run 是否绿色，点进去看失败步骤
+
+### 7.2 常见修改点
+- 修改 cron 频率：`.github/workflows/news-bot.yml` 的 `schedule.cron`
+- 修改关键词/免打扰/夜间汇总：`.github/workflows/news-bot.yml` 的 `env`
+- 调整配图清晰度：`news_notifier.py` 的 `normalize_image_url()`
+- 修改数据源：`news_notifier.py` 的 `SOURCE_FEEDS`
+
+### 7.3 重要安全说明（token 不写进 README）
+- Telegram 与 GitHub 的凭据不要写进仓库文件。
+- Telegram：在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 里改 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`。
+- 时区：在同处 Variables 改 `NEWS_TZ`（例如 `Asia/Shanghai`）。
+- 本机 git push 免输密码：凭据保存在 macOS Keychain（不是 README）。
+
+### 7.4 本地更新维护（给 Codex 用）
+维护目录：`/Users/oliverou/telegram-news-pusher`
+
+建议每次修改前先备份：
+```bash
+cd /Users/oliverou/telegram-news-pusher
+./backup_version.sh
+```
+
+修改并推送：
+```bash
+cd /Users/oliverou/telegram-news-pusher
+git status
+git add -A
+git commit -m "your message"
+# 云端会自动提交 .state.cloud.json，push 前偶尔需要先同步：
+git fetch origin main
+git rebase origin/main
+git push origin main
+```
