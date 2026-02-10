@@ -460,7 +460,14 @@ def send_news_item(
             return
         except Exception:
             logging.exception("sendPhoto失败，source=%s url=%s", source, image_url)
-    raise RuntimeError("所有可用图片URL都发送失败")
+    # Fallback: photos can fail due to Telegram not being able to fetch the remote image.
+    # In that case, still send the text so news isn't silently lost.
+    try:
+        send_telegram_message(token, chat_id, caption)
+        logging.info("sendPhoto均失败，已降级为sendMessage，source=%s", source)
+        return
+    except Exception as exc:
+        raise RuntimeError("所有可用图片URL都发送失败且sendMessage也失败") from exc
 
 
 def flush_night_digest(
@@ -471,6 +478,9 @@ def flush_night_digest(
         return
 
     logging.info("发送夜间汇总，条数=%s", len(buffered))
+    remain = []
+    ok = 0
+    failed = 0
     for item in buffered:
         source = item.get("source") or "未知来源"
         entry = item.get("entry") or {}
@@ -483,8 +493,17 @@ def flush_night_digest(
                 prefix="[夜间汇总] ",
                 fetch_article_image_enabled=fetch_article_image_enabled,
             )
+            ok += 1
         except Exception:
+            failed += 1
+            remain.append(item)
             logging.exception("夜间汇总推送失败: %s", source)
+
+    if failed:
+        # Keep failed items for retry on next cycle (don't set last_digest_date).
+        state["night_buffer"] = remain
+        logging.warning("夜间汇总部分失败，成功=%s 失败=%s，将在下轮重试失败项", ok, failed)
+        return
 
     state["night_buffer"] = []
     state["last_digest_date"] = today_str
@@ -534,7 +553,11 @@ def run(run_once: bool = False) -> None:
             entries_total = 0
             skipped_seen = 0
             skipped_major = 0
+            pushed_ok = 0
+            pushed_fail = 0
+            buffered_added = 0
             all_new = []
+            cycle_seen = set()
             for source, url in source_feeds.items():
                 try:
                     entries = fetch_entries(url)
@@ -548,8 +571,10 @@ def run(run_once: bool = False) -> None:
                 new_count = 0
                 for entry in entries:
                     uid = entry_uid(entry)
-                    if not uid or uid in state["seen"]:
-                        if uid and uid in state["seen"]:
+                    if not uid:
+                        continue
+                    if uid in state["seen"] or uid in cycle_seen:
+                        if uid in state["seen"]:
                             skipped_seen += 1
                         continue
 
@@ -557,8 +582,8 @@ def run(run_once: bool = False) -> None:
                         skipped_major += 1
                         continue
 
-                    state["seen"][uid] = cycle_ts
-                    all_new.append((source, entry))
+                    cycle_seen.add(uid)
+                    all_new.append((source, entry, uid))
                     new_count += 1
                     if new_count >= max_items_per_source:
                         break
@@ -583,6 +608,9 @@ def run(run_once: bool = False) -> None:
                     )
 
             if not state.get("initialized", False):
+                # Seed seen cache on the very first run (prevents historical spam).
+                for _source, _entry, uid in all_new:
+                    state["seen"][uid] = cycle_ts
                 state["initialized"] = True
                 save_state(state_file, state)
                 if bootstrap_silent:
@@ -594,34 +622,42 @@ def run(run_once: bool = False) -> None:
 
             if quiet_now:
                 buffered = state.get("night_buffer", [])
-                for source, entry in all_new:
+                for source, entry, uid in all_new:
                     if len(buffered) >= night_digest_max:
                         break
                     buffered.append({"source": source, "entry": entry})
+                    state["seen"][uid] = cycle_ts
+                    buffered_added += 1
                 state["night_buffer"] = buffered
-                if all_new:
-                    logging.info("夜间免打扰生效，新增%s条进入汇总缓存", len(all_new))
+                if buffered_added:
+                    logging.info("夜间免打扰生效，新增%s条进入汇总缓存", buffered_added)
             else:
-                for source, entry in all_new:
+                for source, entry, uid in all_new:
                     try:
                         send_news_item(
                             token, chat_id, source, entry, fetch_article_image_enabled=fetch_article_image_enabled
                         )
+                        state["seen"][uid] = cycle_ts
+                        pushed_ok += 1
                         logging.info("已推送: %s | %s", source, entry.get("title", ""))
                     except Exception:
+                        pushed_fail += 1
                         logging.exception("推送失败: %s", source)
 
             save_state(state_file, state)
             logging.info(
-                "summary quiet=%s sources_ok=%s sources_fail=%s entries_total=%s new=%s skipped_seen=%s skipped_major=%s buffered=%s",
+                "summary quiet=%s sources_ok=%s sources_fail=%s entries_total=%s new=%s pushed_ok=%s pushed_fail=%s skipped_seen=%s skipped_major=%s buffered=%s buffered_added=%s",
                 quiet_now,
                 sources_ok,
                 sources_fail,
                 entries_total,
                 len(all_new),
+                pushed_ok,
+                pushed_fail,
                 skipped_seen,
                 skipped_major,
                 len(state.get("night_buffer", [])),
+                buffered_added,
             )
             logging.info("本轮完成，新消息=%s", len(all_new))
         except Exception:
