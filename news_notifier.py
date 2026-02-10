@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
 import html
 import urllib.parse
@@ -182,7 +183,26 @@ def load_state(state_file: Path) -> dict:
     state.setdefault("seen", {})
     state.setdefault("night_buffer", [])
     state.setdefault("last_digest_date", "")
+    state.setdefault("last_run", {})
+    if not isinstance(state.get("last_run"), dict):
+        state["last_run"] = {}
     return state
+
+
+def try_git(args: List[str]) -> str:
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+
+
+def github_run_url() -> str:
+    server = (os.getenv("GITHUB_SERVER_URL") or "").strip()
+    repo = (os.getenv("GITHUB_REPOSITORY") or "").strip()
+    run_id = (os.getenv("GITHUB_RUN_ID") or "").strip()
+    if server and repo and run_id:
+        return f"{server}/{repo}/actions/runs/{run_id}"
+    return ""
 
 
 def save_state(state_file: Path, state: dict) -> None:
@@ -664,6 +684,44 @@ def run(run_once: bool = False) -> None:
                     except Exception:
                         pushed_fail += 1
                         logging.exception("推送失败: %s", source)
+
+            checkout_sha = try_git(["git", "rev-parse", "HEAD"])
+            checkout_ref = try_git(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+            if checkout_ref == "HEAD":
+                checkout_ref = ""
+
+            utc_now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            state["last_run"] = {
+                "utc": utc_now,
+                "local": now_local.replace(microsecond=0).isoformat(),
+                "tz": tz_name,
+                "local_hour": now_local.hour,
+                "quiet": quiet_now,
+                "sources_ok": sources_ok,
+                "sources_fail": sources_fail,
+                "entries_total": entries_total,
+                "new": len(all_new),
+                "pushed_ok": pushed_ok,
+                "pushed_fail": pushed_fail,
+                "skipped_seen": skipped_seen,
+                "skipped_major": skipped_major,
+                "buffered_total": len(state.get("night_buffer", [])),
+                "buffered_added": buffered_added,
+                "seen_size": len(state.get("seen", {})) if isinstance(state.get("seen"), dict) else 0,
+                "github": {
+                    "repo": (os.getenv("GITHUB_REPOSITORY") or "").strip(),
+                    "workflow": (os.getenv("GITHUB_WORKFLOW") or "").strip(),
+                    "run_id": (os.getenv("GITHUB_RUN_ID") or "").strip(),
+                    "run_number": (os.getenv("GITHUB_RUN_NUMBER") or "").strip(),
+                    "sha": (os.getenv("GITHUB_SHA") or "").strip(),
+                    "ref": (os.getenv("GITHUB_REF") or "").strip(),
+                    "run_url": github_run_url(),
+                },
+                "checkout": {
+                    "ref": checkout_ref,
+                    "sha": checkout_sha,
+                },
+            }
 
             save_state(state_file, state)
             logging.info(
