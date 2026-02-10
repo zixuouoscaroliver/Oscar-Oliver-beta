@@ -69,6 +69,61 @@ DEFAULT_MAJOR_KEYWORDS = [
     "tariff",
     "taiwan",
     "south china sea",
+    # User-focused topics
+    "trump",
+    "xi jinping",
+    "习近平",
+    "巴以冲突",
+    "israel",
+    "israeli",
+    "palestine",
+    "palestinian",
+    "gaza",
+    "hamas",
+    "west bank",
+    "俄乌战争",
+    "ukraine",
+    "ukrainian",
+    "russia",
+    "russian",
+    "putin",
+    "zelensky",
+    "kyiv",
+    "moscow",
+    "乌克兰",
+    "俄罗斯",
+    "eu",
+    "europe",
+    "european",
+    "eurozone",
+    "ecb",
+    "brussels",
+    "africa",
+    "african",
+    "非洲",
+    "sudan",
+    "darfur",
+    "congo",
+    "drc",
+    "somalia",
+    "sahel",
+    "boko haram",
+    "al-shabaab",
+    "greenland",
+    "格陵兰",
+    "格陵兰岛",
+    "southeast asia",
+    "asean",
+    "东南亚",
+    "philippines",
+    "vietnam",
+    "thailand",
+    "myanmar",
+    "indonesia",
+    "malaysia",
+    "singapore",
+    "cambodia",
+    "laos",
 ]
 
 DEFAULT_FALLBACK_IMAGE = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png"
@@ -399,8 +454,23 @@ def parse_keywords(raw: str) -> List[str]:
 def build_keyword_patterns(keywords: List[str]) -> List[re.Pattern]:
     patterns = []
     for kw in keywords:
-        part = r"\s+".join(re.escape(p) for p in kw.split())
-        patterns.append(re.compile(r"\b" + part + r"\b", re.IGNORECASE))
+        kw = (kw or "").strip()
+        if not kw:
+            continue
+
+        is_ascii = kw.isascii()
+        if is_ascii:
+            # For ASCII keywords:
+            # - Match full words / phrases (avoid matching inside other words: fed != federal).
+            # - Allow hyphen in multi-word phrases (e.g. "White-House").
+            part = r"[\s\-]+".join(re.escape(p) for p in kw.split())
+            patterns.append(
+                re.compile(r"(?<![A-Za-z0-9_])" + part + r"(?![A-Za-z0-9_])", re.IGNORECASE)
+            )
+        else:
+            # For non-ASCII (e.g. CJK), \b word boundary is unreliable (titles often have no spaces).
+            # Use substring match instead.
+            patterns.append(re.compile(re.escape(kw), re.IGNORECASE))
     return patterns
 
 

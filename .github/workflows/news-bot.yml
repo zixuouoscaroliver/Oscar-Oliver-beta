@@ -74,7 +74,7 @@ jobs:
           MAX_ITEMS_PER_SOURCE: "3"
           SEEN_TTL_HOURS: "72"
           MAJOR_ONLY: "true"
-          MAJOR_KEYWORDS: "breaking,urgent,election,war,ceasefire,attack,missile,killed,dead,explosion,earthquake,flood,hurricane,wildfire,sanction,supreme court,white house,fed,interest rate,inflation,recession,bankruptcy,merger,acquisition,ipo,earnings,tariff,taiwan,south china sea"
+          MAJOR_KEYWORDS: "breaking,urgent,election,war,ceasefire,attack,missile,killed,dead,explosion,earthquake,flood,hurricane,wildfire,sanction,supreme court,white house,fed,interest rate,inflation,recession,bankruptcy,merger,acquisition,ipo,earnings,tariff,taiwan,south china sea,trump,xi jinping,习近平,巴以冲突,israel,israeli,palestine,palestinian,gaza,hamas,west bank,俄乌战争,ukraine,ukrainian,russia,russian,putin,zelensky,kyiv,moscow,乌克兰,俄罗斯,eu,europe,european,eurozone,ecb,brussels,africa,african,非洲,sudan,darfur,congo,drc,somalia,sahel,boko haram,al-shabaab,greenland,格陵兰,格陵兰岛,southeast asia,asean,东南亚,philippines,vietnam,thailand,myanmar,indonesia,malaysia,singapore,cambodia,laos"
           QUIET_HOUR_START: "23"
           QUIET_HOUR_END: "9"
           NIGHT_DIGEST_MAX: "40"
