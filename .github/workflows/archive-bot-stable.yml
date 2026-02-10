@@ -1,0 +1,43 @@
+name: Archive Bot Stable
+
+"on":
+  push:
+    branches:
+      - bot-stable
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag-archive:
+    # Only archive when this workflow runs on `bot-stable`.
+    if: github.ref == 'refs/heads/bot-stable'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Create and push archive tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+
+          ts=$(date -u +'%Y%m%d-%H%M%S')
+          sha=$(git rev-parse HEAD)
+          tag="bot-archive-${ts}"
+
+          echo "tag=${tag}"
+          echo "sha=${sha}"
+
+          git tag -a "${tag}" -m "Archive bot-stable @ ${sha}"
+          git push origin "${tag}"
+

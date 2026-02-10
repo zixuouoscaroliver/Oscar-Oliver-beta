@@ -112,7 +112,7 @@ launchctl bootout gui/$(id -u)/com.oliverou.telegram-news-pusher
 为保证 9 家媒体都能稳定接入，程序默认使用 Google News 的站点 RSS 搜索（按域名过滤），来源仍然是对应媒体站点链接。
 
 ## 6. 免费云端常驻（GitHub Actions）
-适合笔记本合盖/关机后继续推送。每 5 分钟运行一次，不需要自购服务器。
+适合笔记本合盖/关机后继续推送。默认每 10 分钟运行一次，不需要自购服务器。
 
 ### 6.1 准备仓库
 把 `/Users/oliverou/telegram-news-pusher` 推到一个 GitHub 仓库（建议公开仓库，免费额度更稳）。
@@ -133,6 +133,20 @@ launchctl bootout gui/$(id -u)/com.oliverou.telegram-news-pusher
 
 进入 `Actions -> Telegram News Bot`，手动点一次 `Run workflow` 完成首轮初始化，后续会按 cron 自动运行。
 
+### 6.4 版本存档 / 回滚（推荐）
+为避免 `main` 分支的改动导致定时任务跑不起来，Actions 默认运行稳定引用（默认 `bot-stable`），并且在 `bot-stable` 更新时自动打归档 tag。
+
+- 稳定分支：`bot-stable`（线上运行用，确认可跑再更新）
+- 开发分支：`main`（日常开发用）
+- 运行引用优先级（从高到低）：
+  - 手动 `Run workflow` 填写 `ref`
+  - 仓库变量 `BOT_CODE_REF`（`Settings -> Secrets and variables -> Actions -> Variables`）
+  - 默认 `bot-stable`
+
+发布 / 回滚：
+- 发布新版本：把确认可跑的提交合并/快进到 `bot-stable`，推送后会自动生成 tag：`bot-archive-YYYYMMDD-HHMMSS`
+- 回滚到旧版本：把 `BOT_CODE_REF` 改成某个 `bot-archive-...` tag（或 commit SHA），下一次定时运行就会跑老版本
+
 ## 7. 维护与排障（建议先读）
 
 Actions 页面：
@@ -140,7 +154,7 @@ Actions 页面：
 
 云端运行说明：
 - 工作流：`.github/workflows/news-bot.yml`
-- 运行方式：`python news_notifier.py --once`（Actions 每 5 分钟跑一次）
+- 运行方式：`python news_notifier.py --once`（Actions 默认每 10 分钟跑一次）
 - 状态文件：`.state.cloud.json`（由 Actions 自动提交更新，用于去重和夜间汇总）
 
 ### 7.1 不推送/推送少（最常见原因）
@@ -161,17 +175,17 @@ Actions 页面：
 - 本机 git push 免输密码：凭据保存在 macOS Keychain（不是 README）。
 
 ### 7.4 本地更新维护（给 Codex 用）
-维护目录：`/Users/oliverou/telegram-news-pusher`
+维护目录：`/Users/oliverou/Oscar-Oliver`
 
 建议每次修改前先备份：
 ```bash
-cd /Users/oliverou/telegram-news-pusher
+cd /Users/oliverou/Oscar-Oliver
 ./backup_version.sh
 ```
 
 修改并推送：
 ```bash
-cd /Users/oliverou/telegram-news-pusher
+cd /Users/oliverou/Oscar-Oliver
 git status
 git add -A
 git commit -m "your message"

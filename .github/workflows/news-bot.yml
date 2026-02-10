@@ -5,6 +5,11 @@ name: Telegram News Bot
     # Every 10 minutes. Also "touching" schedule helps re-enable it if GitHub had paused scheduled runs.
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to run (branch/tag/SHA). Leave empty to use BOT_CODE_REF (repo variable) or bot-stable."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -22,11 +27,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+          # Pin the runtime to a stable ref so changes in `main` don't break scheduled runs.
+          ref: ${{ inputs.ref || vars.BOT_CODE_REF || 'bot-stable' }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Show code version
+        run: |
+          echo "code_ref=${{ inputs.ref || vars.BOT_CODE_REF || 'bot-stable' }}"
+          echo "code_sha=$(git rev-parse HEAD)"
+          git show -s --format='%h %ci %s'
 
       - name: Restore state from bot-state branch (best-effort)
         env:
