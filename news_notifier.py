@@ -128,6 +128,15 @@ DEFAULT_MAJOR_KEYWORDS = [
 
 DEFAULT_FALLBACK_IMAGE = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png"
 
+SUMMARY_TOPIC_RULES = [
+    ("战争与冲突", ["war", "ceasefire", "attack", "missile", "drone", "gaza", "israel", "ukraine", "russia"]),
+    ("美国政治", ["trump", "biden", "white house", "supreme court", "congress", "senate", "election"]),
+    ("中国与亚太", ["china", "xi", "taiwan", "south china sea", "philippines", "asean", "japan"]),
+    ("经济与市场", ["fed", "inflation", "interest rate", "recession", "tariff", "earnings", "ipo", "bank"]),
+    ("灾害与事故", ["earthquake", "flood", "hurricane", "wildfire", "explosion", "crash"]),
+    ("科技与产业", ["ai", "chip", "semiconductor", "apple", "google", "meta", "openai", "tesla"]),
+]
+
 
 def resolve_news_timezone() -> tuple[str, tzinfo]:
     tz_name = (os.getenv("NEWS_TZ") or os.getenv("TZ") or "").strip()
@@ -582,23 +591,50 @@ def send_news_item(
 
 
 def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime) -> str:
+    def detect_topic(title: str) -> str:
+        t = (title or "").lower()
+        for label, kws in SUMMARY_TOPIC_RULES:
+            if any(k in t for k in kws):
+                return label
+        return "其他动态"
+
     source_counts: Dict[str, int] = {}
+    topic_counts: Dict[str, int] = {}
+    representative_titles: Dict[str, str] = {}
     for item in items:
         source = item.get("source") or "未知来源"
         source_counts[source] = source_counts.get(source, 0) + 1
+        entry = item.get("entry") or {}
+        title = (entry.get("title") or "").strip().replace("\n", " ")
+        topic = detect_topic(title)
+        topic_counts[topic] = topic_counts.get(topic, 0) + 1
+        if title and topic not in representative_titles:
+            representative_titles[topic] = title
 
     top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5])
+    top_topics = sorted(topic_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
+    topic_line = "；".join(f"{name}{count}条" for name, count in top_topics) or "无明显主题"
+
     lines = [
         f"【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）",
+        f"主题分布：{topic_line}",
         f"主要来源：{top_sources or '未知'}",
         "",
-        "重点标题：",
+        "你现在需要知道：",
     ]
-    for idx, item in enumerate(items[:8], start=1):
-        source = item.get("source") or "未知来源"
-        entry = item.get("entry") or {}
-        title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
-        lines.append(f"{idx}. [{source}] {title}")
+
+    for idx, (topic, _count) in enumerate(top_topics[:3], start=1):
+        sample = representative_titles.get(topic, "")
+        sample = sample[:120] + ("..." if len(sample) > 120 else "")
+        lines.append(f"{idx}) {topic}：{sample or '暂无代表标题'}")
+
+    watch = []
+    for critical in ("战争与冲突", "美国政治", "经济与市场"):
+        if topic_counts.get(critical, 0) > 0:
+            watch.append(critical)
+    watch_line = "、".join(watch) if watch else "暂无明显高风险主题"
+    lines.append("")
+    lines.append(f"值得关注：{watch_line}")
     return "\n".join(lines)[:3500]
 
 

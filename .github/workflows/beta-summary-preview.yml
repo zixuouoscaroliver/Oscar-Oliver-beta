@@ -1,0 +1,74 @@
+name: Beta Summary Preview
+
+on:
+  workflow_dispatch:
+
+jobs:
+  send-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Send summary preview to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NEWS_TZ: ${{ vars.NEWS_TZ || 'Asia/Shanghai' }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from news_notifier import maybe_send_compact_summary
+
+          tz_name = os.getenv("NEWS_TZ", "Asia/Shanghai")
+          now_local = datetime.now(ZoneInfo(tz_name))
+
+          samples = [
+            ("Reuters", "US and EU discuss new sanctions package after latest escalation", "https://example.com/1"),
+            ("WaPo", "Supreme Court hears major election law case", "https://example.com/2"),
+            ("AP NEWS", "Fed officials signal rates may stay high for longer", "https://example.com/3"),
+            ("SCMP", "Tensions rise in the South China Sea after naval standoff", "https://example.com/4"),
+            ("WSJ", "Global chip makers race to secure AI supply chain", "https://example.com/5"),
+            ("Politico", "Congress leaders restart budget talks to avoid shutdown", "https://example.com/6"),
+            ("The Atlantic", "Wildfire spreads rapidly as evacuation orders expand", "https://example.com/7"),
+            ("NYP", "Trump campaign reshuffles strategy in key swing states", "https://example.com/8"),
+            ("Economist", "China manufacturing data points to uneven recovery", "https://example.com/9"),
+            ("Reuters", "Oil prices jump amid shipping route disruptions", "https://example.com/10"),
+            ("AP NEWS", "Earthquake damages infrastructure across coastal region", "https://example.com/11"),
+            ("WaPo", "Ceasefire talks continue with no immediate breakthrough", "https://example.com/12"),
+          ]
+
+          items = [
+            {
+              "source": source,
+              "entry": {
+                "title": title,
+                "link": link,
+                "published": now_local.isoformat(),
+              },
+            }
+            for source, title, link in samples
+          ]
+
+          ok = maybe_send_compact_summary(
+            token=os.environ["TELEGRAM_BOT_TOKEN"],
+            chat_id=os.environ["TELEGRAM_CHAT_ID"],
+            items=items,
+            tz_name=tz_name,
+            now_local=now_local,
+            threshold=10,
+            ai_api_key="",  # force rule-based summary preview
+            ai_model="gpt-5-mini",
+            ai_max_items=30,
+          )
+          if not ok:
+            raise RuntimeError("Preview summary did not trigger")
+          print("preview summary sent")
+          PY
