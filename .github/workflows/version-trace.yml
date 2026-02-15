@@ -15,25 +15,30 @@ jobs:
   tag-iteration:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Create trace tag
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -e
           ts=$(date -u +"%Y%m%d-%H%M%S")
-          sha=$(git rev-parse --short HEAD)
-          branch=${GITHUB_REF_NAME//\//-}
+          sha=$(printf "%s" "$SHA" | cut -c1-7)
+          branch=${BRANCH//\//-}
           tag="trace-${branch}-${ts}-${sha}"
+          api="https://api.github.com/repos/${REPO}/git/refs"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag -a "$tag" -m "trace: ${GITHUB_REF_NAME} ${GITHUB_SHA}"
-          git push origin "$tag"
+          payload=$(printf '{"ref":"refs/tags/%s","sha":"%s"}' "$tag" "$SHA")
+          code=$(curl -sS -o /tmp/tag_create_resp.json -w "%{http_code}" \
+            -X POST "$api" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "$payload")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "failed to create tag, http=${code}"
+            cat /tmp/tag_create_resp.json
+            exit 1
+          fi
 
           echo "created tag: $tag"
