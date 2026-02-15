@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 import html
+import email.utils
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -136,6 +137,25 @@ SUMMARY_TOPIC_RULES = [
     ("经济与市场", ["fed", "inflation", "interest rate", "recession", "tariff", "earnings", "ipo", "bank"]),
     ("灾害与事故", ["earthquake", "flood", "hurricane", "wildfire", "explosion", "crash"]),
     ("科技与产业", ["ai", "chip", "semiconductor", "apple", "google", "meta", "openai", "tesla"]),
+]
+SOURCE_HEAT_WEIGHT = {
+    "Reuters": 2.5,
+    "AP NEWS": 2.4,
+    "WaPo": 2.3,
+    "WSJ": 2.3,
+    "Economist": 2.1,
+    "Politico": 2.0,
+    "SCMP": 2.0,
+    "The Atlantic": 1.8,
+    "NYP": 1.6,
+}
+HEAT_SIGNAL_WEIGHTS = [
+    (("breaking", "urgent", "alert"), 3.0),
+    (("war", "attack", "missile", "ceasefire", "sanction", "explosion"), 2.6),
+    (("election", "white house", "supreme court", "congress", "trump", "biden"), 2.2),
+    (("fed", "inflation", "interest rate", "recession", "tariff", "bank"), 2.1),
+    (("earthquake", "flood", "hurricane", "wildfire"), 2.3),
+    (("ai", "chip", "semiconductor"), 1.6),
 ]
 
 
@@ -608,6 +628,51 @@ def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime
                 return label
         return "其他动态"
 
+    def parse_published_ts(entry: dict) -> datetime | None:
+        raw = (entry.get("published") or "").strip()
+        if not raw:
+            return None
+        try:
+            # RFC 2822 / RFC 822
+            dt = email.utils.parsedate_to_datetime(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+        try:
+            # ISO-like
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    def estimate_heat(source: str, entry: dict) -> float:
+        title = (entry.get("title") or "").strip().lower()
+        score = SOURCE_HEAT_WEIGHT.get(source, 1.5)
+
+        for kws, w in HEAT_SIGNAL_WEIGHTS:
+            hit = sum(1 for kw in kws if kw in title)
+            if hit:
+                score += w + (hit - 1) * 0.4
+
+        if re.search(r"\b\d{3,}\b", title):
+            score += 0.8
+
+        published_dt = parse_published_ts(entry)
+        if published_dt:
+            age_hours = max(0.0, (now_local.astimezone(timezone.utc) - published_dt).total_seconds() / 3600)
+            if age_hours <= 3:
+                score += 1.8
+            elif age_hours <= 12:
+                score += 1.2
+            elif age_hours <= 24:
+                score += 0.7
+
+        return round(score, 3)
+
     source_counts: Dict[str, int] = {}
     grouped: Dict[str, List[dict]] = {}
     topic_order = [x[0] for x in SUMMARY_TOPIC_RULES] + ["其他动态"]
@@ -617,23 +682,48 @@ def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime
         entry = it.get("entry") or {}
         title = (entry.get("title") or "").strip()
         topic = detect_topic(title)
-        grouped.setdefault(topic, []).append(it)
+        grouped.setdefault(topic, []).append(
+            {
+                "item": it,
+                "heat": estimate_heat(src, entry),
+            }
+        )
 
     top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]) or "未知"
+    topic_rank = {
+        t: (
+            sum(x["heat"] for x in rows) / max(1, len(rows)),
+            len(rows),
+            -topic_order.index(t) if t in topic_order else -999,
+        )
+        for t, rows in grouped.items()
+    }
+    ranked_topics = sorted(
+        grouped.keys(),
+        key=lambda t: (
+            -topic_rank[t][0],  # category average heat desc
+            -topic_rank[t][1],  # count desc
+            topic_order.index(t) if t in topic_order else 999,
+        ),
+    )
+
     lines = [
         f"<b>【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）</b>",
         f"主要来源：{html.escape(top_sources)}",
         "",
     ]
     idx = 1
-    for topic in topic_order:
+    for topic in ranked_topics:
         bucket = grouped.get(topic, [])
         if not bucket:
             continue
-        lines.append(f"<b>{html.escape(topic)}（{len(bucket)}）</b>")
-        for item in bucket:
+        avg_heat = sum(x["heat"] for x in bucket) / max(1, len(bucket))
+        lines.append(f"<b>{html.escape(topic)}（{len(bucket)}，均热度{avg_heat:.1f}）</b>")
+        bucket_sorted = sorted(bucket, key=lambda x: (-x["heat"],))
+        for rec in bucket_sorted:
             if idx > SUMMARY_MAX_HEADLINES:
                 break
+            item = rec["item"]
             source = item.get("source") or "未知来源"
             entry = item.get("entry") or {}
             title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
