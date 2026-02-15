@@ -53,39 +53,42 @@
     "https://www.reuters.com/world/rubio-visit-eastern-europe-bolster-ties-with-pro-trump-leaders-2026-02-15/": 1771136599,
     "https://www.scmp.com/news/world/europe/article/3343567/indian-author-arundhati-roy-quits-berlinale-after-stay-out-politics-gaza-comments?utm_source=rss_feed": 1771136599,
     "https://www.scmp.com/week-asia/economics/article/3343514/uae-surpassing-hong-kong-challenging-singapore-global-trade-crown?utm_source=rss_feed": 1771136599,
-    "https://www.scmp.com/news/china/military/article/3343466/taiwan-defence-budget-delays-may-push-island-down-us-priority-list-william-lai-warns?utm_source=rss_feed": 1771136599
+    "https://www.scmp.com/news/china/military/article/3343466/taiwan-defence-budget-delays-may-push-island-down-us-priority-list-william-lai-warns?utm_source=rss_feed": 1771136599,
+    "https://apnews.com/article/denmark-us-hockey-olympics-greenland-dd95d7420e52740c9da7436bf38dcbaf": 1771137127,
+    "https://www.scmp.com/tech/big-tech/article/3343614/beijing-warns-tech-giants-curb-involution-amid-ai-giveaway-war?utm_source=rss_feed": 1771137127,
+    "https://www.scmp.com/news/asia/southeast-asia/article/3343615/how-things-went-downhill-vietnams-once-booming-cryptocurrency-traders?utm_source=rss_feed": 1771137127
   },
   "night_buffer": [],
   "last_digest_date": "",
   "last_run": {
-    "utc": "2026-02-15T06:23:36Z",
-    "local": "2026-02-15T14:23:19+08:00",
+    "utc": "2026-02-15T06:32:22Z",
+    "local": "2026-02-15T14:32:07+08:00",
     "tz": "Asia/Shanghai",
     "local_hour": 14,
     "quiet": false,
     "sources_ok": 9,
     "sources_fail": 0,
-    "entries_total": 190,
-    "new": 7,
-    "pushed_ok": 7,
+    "entries_total": 189,
+    "new": 3,
+    "pushed_ok": 3,
     "pushed_fail": 0,
-    "skipped_seen": 45,
-    "skipped_major": 135,
+    "skipped_seen": 50,
+    "skipped_major": 136,
     "buffered_total": 0,
     "buffered_added": 0,
-    "seen_size": 53,
+    "seen_size": 56,
     "github": {
       "repo": "zixuouoscaroliver/Oscar-Oliver-beta",
       "workflow": "Telegram News Bot",
-      "run_id": "22030997617",
-      "run_number": "6",
-      "sha": "d4f2bf0a880ee4d9b01e22f5bc5406c1d7a1457d",
+      "run_id": "22031105170",
+      "run_number": "7",
+      "sha": "1ee9fa37dc62004bc7e45b41edae72053aab6ce4",
       "ref": "refs/heads/main",
-      "run_url": "https://github.com/zixuouoscaroliver/Oscar-Oliver-beta/actions/runs/22030997617"
+      "run_url": "https://github.com/zixuouoscaroliver/Oscar-Oliver-beta/actions/runs/22031105170"
     },
     "checkout": {
       "ref": "bot-beta",
-      "sha": "4f3dfd71e3782371c09853800463db2dc0045ca8"
+      "sha": "1ee9fa37dc62004bc7e45b41edae72053aab6ce4"
     }
   }
 }
