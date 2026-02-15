@@ -1,0 +1,43 @@
+name: Beta Single Preview
+
+on:
+  workflow_dispatch:
+
+jobs:
+  send-single:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Send one single-news preview
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FETCH_ARTICLE_IMAGE: "false"
+        run: |
+          python - <<'PY'
+          import os
+          from news_notifier import send_news_item
+
+          entry = {
+            "title": "Preview: Fed signals rates may stay higher as inflation risks persist",
+            "link": "https://example.com/single-preview",
+            "published": "Sun, 15 Feb 2026 06:20:00 GMT",
+            "image_url": "",
+          }
+
+          send_news_item(
+            token=os.environ["TELEGRAM_BOT_TOKEN"],
+            chat_id=os.environ["TELEGRAM_CHAT_ID"],
+            source="Reuters",
+            entry=entry,
+            fetch_article_image_enabled=False,
+          )
+          print("single preview sent")
+          PY
