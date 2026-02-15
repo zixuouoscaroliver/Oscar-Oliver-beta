@@ -56,24 +56,78 @@ jobs:
           else
             echo "no prior state found in origin/${STATE_BRANCH} (will initialize)"
           fi
+          # Optional: primary heartbeat file created by the macOS runner.
+          if git show "origin/${STATE_BRANCH}:.mac.heartbeat.json" >/dev/null 2>&1; then
+            git show "origin/${STATE_BRANCH}:.mac.heartbeat.json" > .mac.heartbeat.json
+            echo "restored .mac.heartbeat.json from origin/${STATE_BRANCH}"
+          else
+            echo "no primary heartbeat found (Actions will run as fallback)"
+          fi
+
+      - name: Skip if macOS primary is healthy (schedule only)
+        id: primary
+        if: github.event_name == 'schedule'
+        env:
+          PRIMARY_HEARTBEAT_MAX_AGE_SECONDS: ${{ vars.PRIMARY_HEARTBEAT_MAX_AGE_SECONDS || '900' }}
+        run: |
+          python - <<'PY'
+          import datetime, json, os, sys
+          p = ".mac.heartbeat.json"
+          if not os.path.exists(p):
+            print("no heartbeat file; do not skip")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=false\n")
+            sys.exit(0)
+          try:
+            data = json.load(open(p, "r", encoding="utf-8"))
+          except Exception as e:
+            print(f"bad heartbeat json: {e}; do not skip")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=false\n")
+            sys.exit(0)
+          ts = (data.get("ts") or "").strip()
+          if not ts:
+            print("missing ts; do not skip")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=false\n")
+            sys.exit(0)
+          try:
+            t = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+          except Exception as e:
+            print(f"bad ts: {e}; do not skip")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=false\n")
+            sys.exit(0)
+          now = datetime.datetime.now(datetime.timezone.utc)
+          age = (now - t).total_seconds()
+          thr = int(os.getenv("PRIMARY_HEARTBEAT_MAX_AGE_SECONDS", "900"))
+          if age >= 0 and age < thr:
+            print(f"primary healthy (age={age:.0f}s < {thr}s); skip Actions run")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=true\n")
+          else:
+            print(f"primary stale (age={age:.0f}s >= {thr}s); Actions will run")
+            open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8").write("skip=false\n")
+          PY
 
       - name: Ensure state file exists
+        if: steps.primary.outputs.skip != 'true'
         run: |
           if [ ! -f .state.cloud.json ]; then
             python -c 'import json; p=".state.cloud.json"; s={"initialized": False, "seen": {}, "night_buffer": [], "last_digest_date": ""}; open(p,"w",encoding="utf-8").write(json.dumps(s, ensure_ascii=False, indent=2)+"\n")'
           fi
 
       - name: Run bot once
+        if: steps.primary.outputs.skip != 'true'
         env:
           NEWS_TZ: ${{ vars.NEWS_TZ || 'Asia/Shanghai' }}
           TZ: ${{ vars.NEWS_TZ || 'Asia/Shanghai' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STATE_FILE: ".state.cloud.json"
           BOOTSTRAP_SILENT: "true"
           MAX_ITEMS_PER_SOURCE: "3"
           SEEN_TTL_HOURS: "72"
           MAJOR_ONLY: "true"
+          AI_SUMMARY_THRESHOLD: ${{ vars.AI_SUMMARY_THRESHOLD || '10' }}
+          AI_SUMMARY_MODEL: ${{ vars.AI_SUMMARY_MODEL || 'gpt-5-mini' }}
+          AI_SUMMARY_MAX_ITEMS: ${{ vars.AI_SUMMARY_MAX_ITEMS || '30' }}
           MAJOR_KEYWORDS: "breaking,urgent,election,war,ceasefire,attack,missile,killed,dead,explosion,earthquake,flood,hurricane,wildfire,sanction,supreme court,white house,fed,interest rate,inflation,recession,bankruptcy,merger,acquisition,ipo,earnings,tariff,taiwan,south china sea,trump,xi jinping,习近平,巴以冲突,israel,israeli,palestine,palestinian,gaza,hamas,west bank,俄乌战争,ukraine,ukrainian,russia,russian,putin,zelensky,kyiv,moscow,乌克兰,俄罗斯,eu,europe,european,eurozone,ecb,brussels,africa,african,非洲,sudan,darfur,congo,drc,somalia,sahel,boko haram,al-shabaab,greenland,格陵兰,格陵兰岛,southeast asia,asean,东南亚,philippines,vietnam,thailand,myanmar,indonesia,malaysia,singapore,cambodia,laos"
           QUIET_HOUR_START: "23"
           QUIET_HOUR_END: "9"
@@ -97,6 +151,7 @@ jobs:
             --data-urlencode "text=${msg}" >/dev/null || true
 
       - name: Commit state
+        if: steps.primary.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STATE_BRANCH: bot-state

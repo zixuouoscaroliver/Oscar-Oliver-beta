@@ -148,6 +148,16 @@ def source_logo_url(source: str) -> str:
     return f"https://www.google.com/s2/favicons?domain={domain}&sz=256"
 
 
+def source_logo_candidates(source: str) -> List[str]:
+    domain = SOURCE_DOMAINS.get(source, "")
+    if not domain:
+        return []
+    return [
+        f"https://logo.clearbit.com/{domain}",
+        source_logo_url(source),
+    ]
+
+
 def extract_image_from_html(page_url: str, html_text: str) -> str:
     patterns = [
         r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
@@ -548,11 +558,9 @@ def send_news_item(
         except Exception:
             logging.exception("抓取正文配图失败，source=%s", source)
 
-    image_candidates = [
-        normalize_image_url((entry.get("image_url") or "").strip()),
-        article_image,
-        DEFAULT_FALLBACK_IMAGE,
-    ]
+    image_candidates = [normalize_image_url((entry.get("image_url") or "").strip()), article_image]
+    image_candidates.extend(normalize_image_url(x) for x in source_logo_candidates(source))
+    image_candidates.append(DEFAULT_FALLBACK_IMAGE)
     tried = set()
     for image_url in image_candidates:
         if not image_url or image_url in tried:
@@ -573,14 +581,158 @@ def send_news_item(
         raise RuntimeError("所有可用图片URL都发送失败且sendMessage也失败") from exc
 
 
+def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime) -> str:
+    source_counts: Dict[str, int] = {}
+    for item in items:
+        source = item.get("source") or "未知来源"
+        source_counts[source] = source_counts.get(source, 0) + 1
+
+    top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5])
+    lines = [
+        f"【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）",
+        f"主要来源：{top_sources or '未知'}",
+        "",
+        "重点标题：",
+    ]
+    for idx, item in enumerate(items[:8], start=1):
+        source = item.get("source") or "未知来源"
+        entry = item.get("entry") or {}
+        title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
+        lines.append(f"{idx}. [{source}] {title}")
+    return "\n".join(lines)[:3500]
+
+
+def build_ai_summary_text(
+    items: List[dict], tz_name: str, now_local: datetime, api_key: str, model: str, max_items: int = 30
+) -> str:
+    focus = items[: max(1, max_items)]
+    events = []
+    for idx, item in enumerate(focus, start=1):
+        source = item.get("source") or "未知来源"
+        entry = item.get("entry") or {}
+        title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
+        link = (entry.get("link") or "").strip()
+        events.append(f"{idx}. [{source}] {title}\n链接: {link}")
+
+    system_msg = (
+        "你是新闻编辑。请把输入新闻汇总成一条中文消息，目标是让我快速知道今天发生了什么。"
+        "输出要求：1) 3-6行要点；2) 最后给出“值得关注”1行；3) 不要编造。"
+    )
+    user_msg = (
+        f"时间: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}\n"
+        f"新闻共 {len(items)} 条，以下是前 {len(focus)} 条:\n\n" + "\n\n".join(events)
+    )
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                "temperature": 0.2,
+            }
+        ).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    text = (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError(f"AI总结返回为空: {data}")
+    return f"【AI新闻汇总】{now_local.strftime('%m-%d %H:%M')} {tz_name}\n{text}"[:3500]
+
+
+def maybe_send_compact_summary(
+    token: str,
+    chat_id: str,
+    items: List[dict],
+    tz_name: str,
+    now_local: datetime,
+    threshold: int,
+    ai_api_key: str,
+    ai_model: str,
+    ai_max_items: int,
+) -> bool:
+    if len(items) <= threshold:
+        return False
+
+    summary_text = ""
+    if ai_api_key:
+        try:
+            summary_text = build_ai_summary_text(
+                items=items,
+                tz_name=tz_name,
+                now_local=now_local,
+                api_key=ai_api_key,
+                model=ai_model,
+                max_items=ai_max_items,
+            )
+            logging.info("AI汇总成功，条数=%s model=%s", len(items), ai_model)
+        except Exception:
+            logging.exception("AI汇总失败，将降级为规则汇总")
+
+    if not summary_text:
+        summary_text = build_rule_summary_text(items=items, tz_name=tz_name, now_local=now_local)
+
+    top_links = []
+    for item in items[:5]:
+        entry = item.get("entry") or {}
+        link = (entry.get("link") or "").strip()
+        if link:
+            top_links.append(link)
+    if top_links:
+        summary_text = f"{summary_text}\n\n参考链接:\n" + "\n".join(f"- {x}" for x in top_links)
+
+    send_telegram_message(token, chat_id, summary_text[:3900])
+    return True
+
+
 def flush_night_digest(
-    token: str, chat_id: str, state: dict, today_str: str, fetch_article_image_enabled: bool = True
+    token: str,
+    chat_id: str,
+    state: dict,
+    today_str: str,
+    now_local: datetime,
+    tz_name: str,
+    summary_threshold: int,
+    ai_api_key: str,
+    ai_model: str,
+    ai_max_items: int,
+    fetch_article_image_enabled: bool = True,
 ) -> None:
     buffered = state.get("night_buffer", [])
     if not buffered:
         return
 
     logging.info("发送夜间汇总，条数=%s", len(buffered))
+    if maybe_send_compact_summary(
+        token=token,
+        chat_id=chat_id,
+        items=buffered,
+        tz_name=tz_name,
+        now_local=now_local,
+        threshold=summary_threshold,
+        ai_api_key=ai_api_key,
+        ai_model=ai_model,
+        ai_max_items=ai_max_items,
+    ):
+        state["night_buffer"] = []
+        state["last_digest_date"] = today_str
+        logging.info("夜间缓存已汇总推送，条数=%s", len(buffered))
+        return
+
     remain = []
     ok = 0
     failed = 0
@@ -629,6 +781,10 @@ def run(run_once: bool = False) -> None:
     quiet_end = int(os.getenv("QUIET_HOUR_END", "9"))
     night_digest_max = int(os.getenv("NIGHT_DIGEST_MAX", "40"))
     fetch_article_image_enabled = os.getenv("FETCH_ARTICLE_IMAGE", "true").strip().lower() == "true"
+    ai_summary_threshold = int(os.getenv("AI_SUMMARY_THRESHOLD", "10"))
+    ai_summary_model = (os.getenv("AI_SUMMARY_MODEL", "gpt-5-mini") or "gpt-5-mini").strip()
+    ai_summary_max_items = int(os.getenv("AI_SUMMARY_MAX_ITEMS", "30"))
+    openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     tz_name, news_tz = resolve_news_timezone()
 
     if not token or not chat_id:
@@ -656,7 +812,17 @@ def run(run_once: bool = False) -> None:
 
             if (not quiet_now) and now_local.hour >= quiet_end and state.get("last_digest_date", "") != today_str:
                 flush_night_digest(
-                    token, chat_id, state, today_str, fetch_article_image_enabled=fetch_article_image_enabled
+                    token=token,
+                    chat_id=chat_id,
+                    state=state,
+                    today_str=today_str,
+                    now_local=now_local,
+                    tz_name=tz_name,
+                    summary_threshold=ai_summary_threshold,
+                    ai_api_key=openai_api_key,
+                    ai_model=ai_summary_model,
+                    ai_max_items=ai_summary_max_items,
+                    fetch_article_image_enabled=fetch_article_image_enabled,
                 )
 
             sources_ok = 0
@@ -743,17 +909,41 @@ def run(run_once: bool = False) -> None:
                 if buffered_added:
                     logging.info("夜间免打扰生效，新增%s条进入汇总缓存", buffered_added)
             else:
-                for source, entry, uid in all_new:
-                    try:
-                        send_news_item(
-                            token, chat_id, source, entry, fetch_article_image_enabled=fetch_article_image_enabled
-                        )
+                compact_items = [{"source": s, "entry": e, "uid": u} for s, e, u in all_new]
+                sent_compact = False
+                try:
+                    sent_compact = maybe_send_compact_summary(
+                        token=token,
+                        chat_id=chat_id,
+                        items=compact_items,
+                        tz_name=tz_name,
+                        now_local=now_local,
+                        threshold=ai_summary_threshold,
+                        ai_api_key=openai_api_key,
+                        ai_model=ai_summary_model,
+                        ai_max_items=ai_summary_max_items,
+                    )
+                except Exception:
+                    logging.exception("汇总推送失败，将回退逐条发送")
+                    sent_compact = False
+
+                if sent_compact:
+                    for _source, _entry, uid in all_new:
                         state["seen"][uid] = cycle_ts
-                        pushed_ok += 1
-                        logging.info("已推送: %s | %s", source, entry.get("title", ""))
-                    except Exception:
-                        pushed_fail += 1
-                        logging.exception("推送失败: %s", source)
+                    pushed_ok += 1
+                    logging.info("已推送汇总消息，覆盖条数=%s", len(all_new))
+                else:
+                    for source, entry, uid in all_new:
+                        try:
+                            send_news_item(
+                                token, chat_id, source, entry, fetch_article_image_enabled=fetch_article_image_enabled
+                            )
+                            state["seen"][uid] = cycle_ts
+                            pushed_ok += 1
+                            logging.info("已推送: %s | %s", source, entry.get("title", ""))
+                        except Exception:
+                            pushed_fail += 1
+                            logging.exception("推送失败: %s", source)
 
             checkout_sha = try_git(["git", "rev-parse", "HEAD"])
             checkout_ref = try_git(["git", "rev-parse", "--abbrev-ref", "HEAD"])
