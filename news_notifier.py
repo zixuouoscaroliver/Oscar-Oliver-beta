@@ -128,14 +128,8 @@ DEFAULT_MAJOR_KEYWORDS = [
 
 DEFAULT_FALLBACK_IMAGE = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png"
 
-SUMMARY_TOPIC_RULES = [
-    ("战争与冲突", ["war", "ceasefire", "attack", "missile", "drone", "gaza", "israel", "ukraine", "russia"]),
-    ("美国政治", ["trump", "biden", "white house", "supreme court", "congress", "senate", "election"]),
-    ("中国与亚太", ["china", "xi", "taiwan", "south china sea", "philippines", "asean", "japan"]),
-    ("经济与市场", ["fed", "inflation", "interest rate", "recession", "tariff", "earnings", "ipo", "bank"]),
-    ("灾害与事故", ["earthquake", "flood", "hurricane", "wildfire", "explosion", "crash"]),
-    ("科技与产业", ["ai", "chip", "semiconductor", "apple", "google", "meta", "openai", "tesla"]),
-]
+SUMMARY_MAX_HEADLINES = 16
+SUMMARY_MAX_LINKS = 16
 
 
 def resolve_news_timezone() -> tuple[str, tzinfo]:
@@ -591,51 +585,37 @@ def send_news_item(
 
 
 def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime) -> str:
-    def detect_topic(title: str) -> str:
-        t = (title or "").lower()
-        for label, kws in SUMMARY_TOPIC_RULES:
-            if any(k in t for k in kws):
-                return label
-        return "其他动态"
-
     source_counts: Dict[str, int] = {}
-    topic_counts: Dict[str, int] = {}
-    representative_titles: Dict[str, str] = {}
-    for item in items:
-        source = item.get("source") or "未知来源"
-        source_counts[source] = source_counts.get(source, 0) + 1
-        entry = item.get("entry") or {}
-        title = (entry.get("title") or "").strip().replace("\n", " ")
-        topic = detect_topic(title)
-        topic_counts[topic] = topic_counts.get(topic, 0) + 1
-        if title and topic not in representative_titles:
-            representative_titles[topic] = title
-
-    top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5])
-    top_topics = sorted(topic_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
-    topic_line = "；".join(f"{name}{count}条" for name, count in top_topics) or "无明显主题"
-
+    for it in items:
+        src = it.get("source") or "未知来源"
+        source_counts[src] = source_counts.get(src, 0) + 1
+    top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]) or "未知"
     lines = [
         f"【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）",
-        f"主题分布：{topic_line}",
-        f"主要来源：{top_sources or '未知'}",
+        f"主要来源：{top_sources}",
         "",
-        "你现在需要知道：",
+        "标题速览：",
     ]
+    headline_items = items[:SUMMARY_MAX_HEADLINES]
+    for idx, item in enumerate(headline_items, start=1):
+        source = item.get("source") or "未知来源"
+        entry = item.get("entry") or {}
+        title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
+        if len(title) > 92:
+            title = title[:89] + "..."
+        lines.append(f"{idx}. [{source}] {title}")
 
-    for idx, (topic, _count) in enumerate(top_topics[:3], start=1):
-        sample = representative_titles.get(topic, "")
-        sample = sample[:120] + ("..." if len(sample) > 120 else "")
-        lines.append(f"{idx}) {topic}：{sample or '暂无代表标题'}")
+    links = []
+    for idx, item in enumerate(items[:SUMMARY_MAX_LINKS], start=1):
+        link = ((item.get("entry") or {}).get("link") or "").strip()
+        if link:
+            links.append(f"{idx}) {link}")
 
-    watch = []
-    for critical in ("战争与冲突", "美国政治", "经济与市场"):
-        if topic_counts.get(critical, 0) > 0:
-            watch.append(critical)
-    watch_line = "、".join(watch) if watch else "暂无明显高风险主题"
-    lines.append("")
-    lines.append(f"值得关注：{watch_line}")
-    return "\n".join(lines)[:3500]
+    if links:
+        lines.extend(["", "链接索引（点开看详情）：", *links])
+
+    text = "\n".join(lines)
+    return text[:3900]
 
 
 def build_ai_summary_text(
@@ -651,8 +631,12 @@ def build_ai_summary_text(
         events.append(f"{idx}. [{source}] {title}\n链接: {link}")
 
     system_msg = (
-        "你是新闻编辑。请把输入新闻汇总成一条中文消息，目标是让我快速知道今天发生了什么。"
-        "输出要求：1) 3-6行要点；2) 最后给出“值得关注”1行；3) 不要编造。"
+        "你是新闻编辑。请输出高信息密度摘要，目标是在一条消息里看到尽量多标题并能点链接。"
+        "输出格式："
+        "1) 先给1行总体概览；"
+        "2) 给“标题速览”清单（至少10条，格式：序号.[来源] 标题）；"
+        "3) 给“链接索引”（序号对应URL）；"
+        "4) 不要编造。"
     )
     user_msg = (
         f"时间: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}\n"
@@ -687,7 +671,7 @@ def build_ai_summary_text(
     text = (text or "").strip()
     if not text:
         raise RuntimeError(f"AI总结返回为空: {data}")
-    return f"【AI新闻汇总】{now_local.strftime('%m-%d %H:%M')} {tz_name}\n{text}"[:3500]
+    return f"【AI新闻汇总】{now_local.strftime('%m-%d %H:%M')} {tz_name}\n{text}"[:3900]
 
 
 def maybe_send_compact_summary(
@@ -723,12 +707,12 @@ def maybe_send_compact_summary(
         summary_text = build_rule_summary_text(items=items, tz_name=tz_name, now_local=now_local)
 
     top_links = []
-    for item in items[:5]:
+    for item in items[:SUMMARY_MAX_LINKS]:
         entry = item.get("entry") or {}
         link = (entry.get("link") or "").strip()
         if link:
             top_links.append(link)
-    if top_links:
+    if top_links and ("链接索引" not in summary_text):
         summary_text = f"{summary_text}\n\n参考链接:\n" + "\n".join(f"- {x}" for x in top_links)
 
     send_telegram_message(token, chat_id, summary_text[:3900])
