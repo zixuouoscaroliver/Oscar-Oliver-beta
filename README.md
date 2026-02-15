@@ -1,52 +1,42 @@
-# Telegram News Pusher (Stable)
+# Telegram News Pusher (Beta)
 
-稳定版仓库：`zixuouoscaroliver/Oscar-Oliver`
+Beta 仓库：`zixuouoscaroliver/Oscar-Oliver-beta`
 
-这是生产使用的稳定线，负责把多家英文媒体新闻推送到 Telegram。
+这是实验线，用于验证新策略/新配置。功能上与稳定版同源，但允许更快迭代，可能出现推送波动或行为变化。
 
 ## 当前能力
 - 多源抓取：NYP / WaPo / Politico / Economist / WSJ / AP / The Atlantic / Reuters / SCMP
-- 推送策略：优先发 `sendPhoto`（带标题/链接），图片不可用时自动回退
-- 去重与状态：基于 `.state.cloud.json` + `SEEN_TTL_HOURS` 去重
-- 重大新闻筛选：`MAJOR_ONLY=true` 时仅推送命中 `MAJOR_KEYWORDS` 的新闻（并排除 Opinion）
-- 免打扰与晨间汇总：`QUIET_HOUR_START`~`QUIET_HOUR_END` 缓存，白天自动补发
-- 云端定时运行：GitHub Actions 每 10 分钟执行一次 `python news_notifier.py --once`
-- 主备机制：若检测到主机心跳 `.mac.heartbeat.json` 新鲜，Actions 自动跳过
-- 状态持久化：状态写入 `bot-state` 分支，不污染主开发分支
+- 推送策略：优先 `sendPhoto`，失败后回退 `sendMessage`
+- 去重与状态：`.state.cloud.json` + `SEEN_TTL_HOURS`
+- 重大新闻筛选：`MAJOR_ONLY=true` + `MAJOR_KEYWORDS`
+- 免打扰与晨间汇总：`QUIET_HOUR_START`~`QUIET_HOUR_END` + `night_buffer`
+- GitHub Actions 定时执行：每 10 分钟运行一次 `python news_notifier.py --once`
+- 状态写回：提交到 `bot-state` 分支
 
-## 仓库分支约定（稳定版）
-- `main`：开发分支
-- `bot-stable`：稳定运行分支（Actions 默认运行此分支）
-- `bot-state`：仅存储状态文件（`.state.cloud.json` / `.mac.heartbeat.json`）
+## 分支约定（Beta）
+- `main`：开发与工作流入口分支
+- `bot-beta`：beta 运行分支（建议通过 `BOT_CODE_REF=bot-beta` 固定）
+- `bot-state`：状态分支（自动维护）
 
-## GitHub Actions 必填配置
+## GitHub Actions 配置（Beta）
 路径：`Settings -> Secrets and variables -> Actions`
 
 ### Secrets
-- `TELEGRAM_BOT_TOKEN`：稳定版 bot token
-- `TELEGRAM_CHAT_ID`：稳定版接收 chat id
+- `TELEGRAM_BOT_TOKEN`：beta bot token
+- `TELEGRAM_CHAT_ID`：beta chat id（必须是该 bot 有权限发送的会话）
 
 ### Variables
-- `NEWS_TZ`：时区（例如 `Asia/Shanghai`）
-- `PRIMARY_HEARTBEAT_MAX_AGE_SECONDS`：主机心跳阈值（默认 900）
-- `BOT_CODE_REF`：可选；不填则 workflow 默认 `bot-stable`
+- `BOT_CODE_REF=bot-beta`（推荐固定，避免误跑到其他分支）
+- `NEWS_TZ`（可选）
+- `PRIMARY_HEARTBEAT_MAX_AGE_SECONDS`（可选）
 
-## 本地运行（可选）
-```bash
-cd /Users/oliverou/telegram-news-pusher
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# 填写 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
-python check_telegram.py
-python news_notifier.py --once
-```
+## 验证是否工作正常
+在 Actions 日志中重点看两行：
+- `code_ref=bot-beta`
+- `summary ... new=... pushed_ok=... pushed_fail=...`
 
-## 运维观察点
-- 工作流文件：`.github/workflows/news-bot.yml`
-- 关键日志：`summary ... new=... pushed_ok=... pushed_fail=...`
-- 若 `new>0` 且 `pushed_ok=0`，通常是 Telegram 配置问题（token/chat_id 权限或目标会话不可达）
+若出现 `new>0` 且 `pushed_ok=0`，通常是 Telegram 目标配置问题（chat_id 不可达、bot 未在群/频道内、未给发送权限等）。
 
-## Beta 说明
-测试线在独立仓库：`zixuouoscaroliver/Oscar-Oliver-beta`，用于实验改动，不影响本稳定版。
+## 与稳定版关系
+- 稳定版仓库：`zixuouoscaroliver/Oscar-Oliver`
+- 建议流程：先在 Beta 验证，再把已验证改动同步到稳定版
