@@ -1,0 +1,39 @@
+name: Version Trace
+
+on:
+  push:
+    branches:
+      - main
+      - bot-stable
+      - bot-beta
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag-iteration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create trace tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          ts=$(date -u +"%Y%m%d-%H%M%S")
+          sha=$(git rev-parse --short HEAD)
+          branch=${GITHUB_REF_NAME//\//-}
+          tag="trace-${branch}-${ts}-${sha}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$tag" -m "trace: ${GITHUB_REF_NAME} ${GITHUB_SHA}"
+          git push origin "$tag"
+
+          echo "created tag: $tag"
