@@ -159,6 +159,60 @@ HEAT_SIGNAL_WEIGHTS = [
 ]
 
 
+def detect_topic(title: str) -> str:
+    t = (title or "").lower()
+    for label, kws in SUMMARY_TOPIC_RULES:
+        if any(k in t for k in kws):
+            return label
+    return "其他动态"
+
+
+def parse_published_ts(entry: dict) -> datetime | None:
+    raw = (entry.get("published") or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = email.utils.parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def compute_news_heat(source: str, entry: dict, now_local: datetime | None = None) -> float:
+    title = (entry.get("title") or "").strip().lower()
+    score = SOURCE_HEAT_WEIGHT.get(source, 1.5)
+
+    for kws, w in HEAT_SIGNAL_WEIGHTS:
+        hit = sum(1 for kw in kws if kw in title)
+        if hit:
+            score += w + (hit - 1) * 0.4
+
+    if re.search(r"\b\d{3,}\b", title):
+        score += 0.8
+
+    published_dt = parse_published_ts(entry)
+    if published_dt:
+        now_utc = (now_local or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        age_hours = max(0.0, (now_utc - published_dt).total_seconds() / 3600)
+        if age_hours <= 3:
+            score += 1.8
+        elif age_hours <= 12:
+            score += 1.2
+        elif age_hours <= 24:
+            score += 0.7
+
+    return round(score, 3)
+
+
 def resolve_news_timezone() -> tuple[str, tzinfo]:
     tz_name = (os.getenv("NEWS_TZ") or os.getenv("TZ") or "").strip()
     if tz_name:
@@ -533,7 +587,8 @@ def build_caption(source: str, entry: dict, prefix: str = "") -> str:
     title = (entry.get("title") or "(无标题)").strip()
     link = (entry.get("link") or "").strip()
     published = entry_time_text(entry)
-    text = f"{prefix}[{source}]\n{title}\n{published}\n{link}".strip()
+    heat = compute_news_heat(source, entry)
+    text = f"{prefix}[{source}] 🔥{heat:.1f}\n{title}\n{published}\n{link}".strip()
     return text[:1024]
 
 
@@ -621,58 +676,6 @@ def send_news_item(
 
 
 def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime) -> str:
-    def detect_topic(title: str) -> str:
-        t = (title or "").lower()
-        for label, kws in SUMMARY_TOPIC_RULES:
-            if any(k in t for k in kws):
-                return label
-        return "其他动态"
-
-    def parse_published_ts(entry: dict) -> datetime | None:
-        raw = (entry.get("published") or "").strip()
-        if not raw:
-            return None
-        try:
-            # RFC 2822 / RFC 822
-            dt = email.utils.parsedate_to_datetime(raw)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except Exception:
-            pass
-        try:
-            # ISO-like
-            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except Exception:
-            return None
-
-    def estimate_heat(source: str, entry: dict) -> float:
-        title = (entry.get("title") or "").strip().lower()
-        score = SOURCE_HEAT_WEIGHT.get(source, 1.5)
-
-        for kws, w in HEAT_SIGNAL_WEIGHTS:
-            hit = sum(1 for kw in kws if kw in title)
-            if hit:
-                score += w + (hit - 1) * 0.4
-
-        if re.search(r"\b\d{3,}\b", title):
-            score += 0.8
-
-        published_dt = parse_published_ts(entry)
-        if published_dt:
-            age_hours = max(0.0, (now_local.astimezone(timezone.utc) - published_dt).total_seconds() / 3600)
-            if age_hours <= 3:
-                score += 1.8
-            elif age_hours <= 12:
-                score += 1.2
-            elif age_hours <= 24:
-                score += 0.7
-
-        return round(score, 3)
-
     source_counts: Dict[str, int] = {}
     grouped: Dict[str, List[dict]] = {}
     topic_order = [x[0] for x in SUMMARY_TOPIC_RULES] + ["其他动态"]
@@ -685,7 +688,7 @@ def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime
         grouped.setdefault(topic, []).append(
             {
                 "item": it,
-                "heat": estimate_heat(src, entry),
+                "heat": compute_news_heat(src, entry, now_local=now_local),
             }
         )
 
@@ -733,9 +736,9 @@ def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime
             safe_title = html.escape(f"[{source}] {title}")
             if link:
                 safe_link = html.escape(link, quote=True)
-                lines.append(f'{idx}. <a href="{safe_link}">{safe_title}</a>')
+                lines.append(f'{idx}. <a href="{safe_link}">{safe_title}</a> (🔥{rec["heat"]:.1f})')
             else:
-                lines.append(f"{idx}. {safe_title}")
+                lines.append(f'{idx}. {safe_title} (🔥{rec["heat"]:.1f})')
             idx += 1
         lines.append("")
         if idx > SUMMARY_MAX_HEADLINES:
@@ -756,14 +759,15 @@ def build_ai_summary_text(
         entry = item.get("entry") or {}
         title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
         link = (entry.get("link") or "").strip()
-        events.append(f"{idx}. [{source}] {title}\n链接: {link}")
+        heat = compute_news_heat(source, entry, now_local=now_local)
+        events.append(f'{idx}. [{source}] {title}\n热度: {heat:.1f}\n链接: {link}')
 
     system_msg = (
         "你是新闻编辑。请输出高信息密度摘要，目标是在一条消息里看到尽量多标题并能直接点标题跳转链接。"
         "输出格式："
         "1) 先给1行总体概览；"
         "2) 按主题分组（每组标题用小标题）；"
-        "3) 每条标题用HTML超链接格式：<a href=\"URL\">[来源] 标题</a>；"
+        "3) 每条标题用HTML超链接格式：<a href=\"URL\">[来源] 标题</a> (🔥热度)；"
         "4) 不要编造。"
     )
     user_msg = (

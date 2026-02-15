@@ -13,6 +13,25 @@ Beta 仓库：`zixuouoscaroliver/Oscar-Oliver-beta`
 - GitHub Actions 定时执行：每 10 分钟运行一次 `python news_notifier.py --once`
 - 状态写回：提交到 `bot-state` 分支
 
+## 热度值与排序规则（Beta）
+系统会给每条新闻计算一个 `heat` 分值，并在推送中显示为 `🔥x.x`。
+
+### 单条新闻热度函数（原理）
+`heat = 来源权重 + 标题信号权重 + 时效权重 + 数字事件加权`
+
+- 来源权重：不同媒体有基础权重（例如 Reuters/AP/WaPo/WSJ 更高）
+- 标题信号权重：标题命中关键词会加分（如 `breaking`、`war`、`election`、`fed`、`earthquake` 等）
+- 时效权重：发布时间越近加分越高（3小时内 > 12小时内 > 24小时内）
+- 数字事件加权：标题包含较大数字（正则 `\\b\\d{3,}\\b`）时额外加分
+
+### 排序规则
+- 类内排序：按单条 `heat` 从高到低
+- 类间排序：按该类别内新闻 `heat` 平均值从高到低
+
+### 展示规则
+- 单条推送：标题头部显示 `🔥x.x`
+- 汇总推送：每条可点击标题后显示 `🔥x.x`，并按上面规则排序
+
 ## 分支约定（Beta）
 - `main`：开发与工作流入口分支
 - `bot-beta`：beta 运行分支（建议通过 `BOT_CODE_REF=bot-beta` 固定）
