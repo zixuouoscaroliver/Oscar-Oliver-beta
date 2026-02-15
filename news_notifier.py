@@ -128,8 +128,15 @@ DEFAULT_MAJOR_KEYWORDS = [
 
 DEFAULT_FALLBACK_IMAGE = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png"
 
-SUMMARY_MAX_HEADLINES = 16
-SUMMARY_MAX_LINKS = 16
+SUMMARY_MAX_HEADLINES = 18
+SUMMARY_TOPIC_RULES = [
+    ("战争与冲突", ["war", "ceasefire", "attack", "missile", "drone", "gaza", "israel", "ukraine", "russia"]),
+    ("美国政治", ["trump", "biden", "white house", "supreme court", "congress", "senate", "election"]),
+    ("中国与亚太", ["china", "xi", "taiwan", "south china sea", "philippines", "asean", "japan"]),
+    ("经济与市场", ["fed", "inflation", "interest rate", "recession", "tariff", "earnings", "ipo", "bank"]),
+    ("灾害与事故", ["earthquake", "flood", "hurricane", "wildfire", "explosion", "crash"]),
+    ("科技与产业", ["ai", "chip", "semiconductor", "apple", "google", "meta", "openai", "tesla"]),
+]
 
 
 def resolve_news_timezone() -> tuple[str, tzinfo]:
@@ -526,15 +533,24 @@ def telegram_api_json(token: str, method: str, payload: dict) -> dict:
     return data
 
 
-def send_telegram_message(token: str, chat_id: str, text: str) -> None:
+def send_telegram_message(
+    token: str,
+    chat_id: str,
+    text: str,
+    parse_mode: str = "",
+    disable_web_page_preview: bool = False,
+) -> None:
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": disable_web_page_preview,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     telegram_api_json(
         token,
         "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": False,
-        },
+        payload,
     )
 
 
@@ -585,37 +601,59 @@ def send_news_item(
 
 
 def build_rule_summary_text(items: List[dict], tz_name: str, now_local: datetime) -> str:
+    def detect_topic(title: str) -> str:
+        t = (title or "").lower()
+        for label, kws in SUMMARY_TOPIC_RULES:
+            if any(k in t for k in kws):
+                return label
+        return "其他动态"
+
     source_counts: Dict[str, int] = {}
+    grouped: Dict[str, List[dict]] = {}
+    topic_order = [x[0] for x in SUMMARY_TOPIC_RULES] + ["其他动态"]
     for it in items:
         src = it.get("source") or "未知来源"
         source_counts[src] = source_counts.get(src, 0) + 1
+        entry = it.get("entry") or {}
+        title = (entry.get("title") or "").strip()
+        topic = detect_topic(title)
+        grouped.setdefault(topic, []).append(it)
+
     top_sources = ", ".join(f"{k}:{v}" for k, v in sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]) or "未知"
     lines = [
-        f"【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）",
-        f"主要来源：{top_sources}",
+        f"<b>【新闻汇总】本轮共 {len(items)} 条（{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}）</b>",
+        f"主要来源：{html.escape(top_sources)}",
         "",
-        "标题速览：",
     ]
-    headline_items = items[:SUMMARY_MAX_HEADLINES]
-    for idx, item in enumerate(headline_items, start=1):
-        source = item.get("source") or "未知来源"
-        entry = item.get("entry") or {}
-        title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
-        if len(title) > 92:
-            title = title[:89] + "..."
-        lines.append(f"{idx}. [{source}] {title}")
+    idx = 1
+    for topic in topic_order:
+        bucket = grouped.get(topic, [])
+        if not bucket:
+            continue
+        lines.append(f"<b>{html.escape(topic)}（{len(bucket)}）</b>")
+        for item in bucket:
+            if idx > SUMMARY_MAX_HEADLINES:
+                break
+            source = item.get("source") or "未知来源"
+            entry = item.get("entry") or {}
+            title = (entry.get("title") or "(无标题)").strip().replace("\n", " ")
+            if len(title) > 92:
+                title = title[:89] + "..."
+            link = (entry.get("link") or "").strip()
+            safe_title = html.escape(f"[{source}] {title}")
+            if link:
+                safe_link = html.escape(link, quote=True)
+                lines.append(f'{idx}. <a href="{safe_link}">{safe_title}</a>')
+            else:
+                lines.append(f"{idx}. {safe_title}")
+            idx += 1
+        lines.append("")
+        if idx > SUMMARY_MAX_HEADLINES:
+            break
+    if idx <= len(items):
+        lines.append(f"… 其余 {len(items) - idx + 1} 条可在下一轮查看")
 
-    links = []
-    for idx, item in enumerate(items[:SUMMARY_MAX_LINKS], start=1):
-        link = ((item.get("entry") or {}).get("link") or "").strip()
-        if link:
-            links.append(f"{idx}) {link}")
-
-    if links:
-        lines.extend(["", "链接索引（点开看详情）：", *links])
-
-    text = "\n".join(lines)
-    return text[:3900]
+    return "\n".join(lines).strip()[:3900]
 
 
 def build_ai_summary_text(
@@ -631,11 +669,11 @@ def build_ai_summary_text(
         events.append(f"{idx}. [{source}] {title}\n链接: {link}")
 
     system_msg = (
-        "你是新闻编辑。请输出高信息密度摘要，目标是在一条消息里看到尽量多标题并能点链接。"
+        "你是新闻编辑。请输出高信息密度摘要，目标是在一条消息里看到尽量多标题并能直接点标题跳转链接。"
         "输出格式："
         "1) 先给1行总体概览；"
-        "2) 给“标题速览”清单（至少10条，格式：序号.[来源] 标题）；"
-        "3) 给“链接索引”（序号对应URL）；"
+        "2) 按主题分组（每组标题用小标题）；"
+        "3) 每条标题用HTML超链接格式：<a href=\"URL\">[来源] 标题</a>；"
         "4) 不要编造。"
     )
     user_msg = (
@@ -706,16 +744,13 @@ def maybe_send_compact_summary(
     if not summary_text:
         summary_text = build_rule_summary_text(items=items, tz_name=tz_name, now_local=now_local)
 
-    top_links = []
-    for item in items[:SUMMARY_MAX_LINKS]:
-        entry = item.get("entry") or {}
-        link = (entry.get("link") or "").strip()
-        if link:
-            top_links.append(link)
-    if top_links and ("链接索引" not in summary_text):
-        summary_text = f"{summary_text}\n\n参考链接:\n" + "\n".join(f"- {x}" for x in top_links)
-
-    send_telegram_message(token, chat_id, summary_text[:3900])
+    send_telegram_message(
+        token,
+        chat_id,
+        summary_text[:3900],
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
     return True
 
 
